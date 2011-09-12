@@ -1,9 +1,9 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 11.00
 # Visual Studio 2010
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Disassembler", "Disassembler.csproj", "{FFFEDF07-DA72-4939-97CC-31E568936745}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Disassembler", "Disassembler\Disassembler.csproj", "{FFFEDF07-DA72-4939-97CC-31E568936745}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Disasm", "..\Disasm\Disasm.vcxproj", "{97A3BE4C-F2FE-47B5-9A1D-8429DC786148}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Disasm", "Disasm\Disasm.vcxproj", "{97A3BE4C-F2FE-47B5-9A1D-8429DC786148}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
