@@ -1926,10 +1926,7 @@ namespace Disassembler
 
 			int i, j, operand, mnemosize, arg;
 			ulong u;
-
 			int cxsize;
-
-			string pname;
 
 			// Prepare disassembler variables and initialize structure disasm.
 			datasize = addrsize = 4; // 32-bit code and data segments only!
@@ -1941,7 +1938,6 @@ namespace Disassembler
 			byte repprefix = 0; // REPxxx prefix or 0
 
 			cmd = new ByteStream(src, 0);
-			//size = srcsize;
 
 			pfixup = -1;
 			softerror = 0;
@@ -2000,8 +1996,7 @@ namespace Disassembler
 					break; // No more prefixes or duplicated prefix
 
 				if (mode >= DISASM_FILE)
-					//	sprintf(da.dump + ndump, "%02X:", *cmd);
-					da.dump.AppendFormat("{0}:", cmd[0]); // FIXME: "%02X:"
+					da.dump.AppendFormat("{0:X}:", cmd[0]);
 
 				da.nprefix++;
 				cmd.AdjustOffset(1);
@@ -2014,7 +2009,8 @@ namespace Disassembler
 			{
 				if (mode >= DISASM_FILE)
 				{
-					da.dump[3] = '\0'; // Leave only first dumped prefix
+					//da.dump[3] = '\0'; // Leave only first dumped prefix
+					string pname;
 					da.nprefix = 1;
 					switch (cmd[(int)-(long)u])
 					{
@@ -2031,7 +2027,6 @@ namespace Disassembler
 						case 0xF3: pname = "REPE"; break;
 						default: pname = "?"; break;
 					};
-					//sprintf(da.result + nresult, "PREFIX %s:", pname);
 					da.result.AppendFormat("PREFIX {0}:", pname);
 
 					if (!extraprefix)
@@ -2141,8 +2136,7 @@ namespace Disassembler
 					else
 					{
 						if (mode >= DISASM_FILE)
-							//sprintf(da.dump + ndump, "%02X", *cmd);
-							da.dump.AppendFormat("{0}", cmd[0]); // FIXME "%02X"
+							da.dump.AppendFormat("{0:X}", cmd[0]);
 
 						cmd.AdjustOffset(1);
 
@@ -2248,33 +2242,24 @@ namespace Disassembler
 						addcomment = false;
 					else
 						addcomment = true;
+
 					// Get type of next argument.
 					if (operand == 0) arg = pd.arg1;
 					else if (operand == 1) arg = pd.arg2;
 					else arg = pd.arg3;
+
 					if (arg == NNN) break; // No more operands
+
 					// Arguments with arg>=PSEUDOOP are assumed operands and are not
 					// displayed in disassembled result, so they require no delimiter.
 					if ((mode >= DISASM_FILE) && arg < PSEUDOOP)
 					{
 						if (operand == 0)
-						{
-							//da.result[nresult++] = ' ';
 							da.result.Append(' ');
-							//if (tabarguments)
-							//{
-							//    while (nresult < 8) da.result[nresult++] = ' ';
-							//};
-						}
 						else
-						{
-							//da.result[nresult++] = ',';
 							da.result.Append(',');
-							//if (extraspace)
-							//    //da.result[nresult++] = ' ';
-							//    da.result.Append(' ');
-						};
 					};
+
 					// Decode, analyse and comment next operand of the command.
 					switch (arg)
 					{
@@ -2370,7 +2355,7 @@ namespace Disassembler
 						case JOB: // Immediate byte offset (for jumps)
 							DecodeRJ(1, srcip + 2); break;
 						case JOW: // Immediate full offset (for jumps)
-							DecodeRJ((ulong)datasize, (ulong)((int)srcip + datasize + 1)); break;	// FIXME
+							DecodeRJ((ulong)datasize, (ulong)((int)srcip + datasize + 1)); break;
 						case JMF: // Immediate absolute far jump/call addr
 							DecodeJF();
 							da.warnings |= DAW_FARADDR; break;
@@ -2409,23 +2394,25 @@ namespace Disassembler
 							break;
 					};
 				};
+
 				// Check whether command may possibly contain fixups.
 				if (pfixup != -1 && da.fixupsize > 0)
 					da.fixupoffset = pfixup;
+
 				// Segment prefix and address size prefix are superfluous for command which
 				// does not access memory. If this the case, mark command as rare to help
 				// in analysis.
-				if (da.memtype == DEC_UNKNOWN &&
-				  (segprefix != SEG_UNDEF || (addrsize != 4 && pd.name[0] != '$'))
-				)
+				if (da.memtype == DEC_UNKNOWN && (segprefix != SEG_UNDEF || (addrsize != 4 && pd.name[0] != '$')))
 				{
 					da.warnings |= DAW_PREFIX;
 					da.cmdtype |= C_RARE;
 				};
+
 				// 16-bit addressing is rare in 32-bit programs. If this is the case,
 				// mark command as rare to help in analysis.
 				if (addrsize != 4) da.cmdtype |= C_RARE;
 			};
+
 			// Suffix of 3DNow! command is accounted best by assuming it immediate byte
 			// constant.
 			if (is3dnow)
@@ -2433,11 +2420,11 @@ namespace Disassembler
 				if (immsize != 0) da.error = DAE_BADCMD;
 				else immsize = 1;
 			};
+
 			// Right or wrong, command decoded. Now dump it.
 			if (da.error != 0)
 			{ // Hard error in command detected
 				if (mode >= DISASM_FILE)
-					//nresult = sprintf(da.result, "???");
 					da.result.Append("???");
 
 				if (da.error == DAE_BADCMD &&
@@ -2445,7 +2432,6 @@ namespace Disassembler
 				)
 				{
 					if (mode >= DISASM_FILE)
-						//sprintf(da.dump + ndump, "%02X", *cmd);
 						da.dump.AppendFormat("{0:X}", cmd[0]);
 
 					cmd.AdjustOffset(1);
@@ -2453,7 +2439,6 @@ namespace Disassembler
 				if (size > 0)
 				{
 					if (mode >= DISASM_FILE)
-						//sprintf(da.dump + ndump, "%02X", *cmd);
 						da.dump.AppendFormat("{0:X}", cmd[0]);
 
 					cmd.AdjustOffset(1);
@@ -2522,7 +2507,9 @@ namespace Disassembler
 				da.error = softerror; // Error, but still display command
 			if (mode >= DISASM_FILE)
 			{
-				if (da.error != DAE_NOERR) switch (da.error)
+				if (da.error != DAE_NOERR)
+				{
+					switch (da.error)
 					{
 						case DAE_CROSS:
 							da.comment = "Command crosses end of memory block"; break;
@@ -2540,6 +2527,7 @@ namespace Disassembler
 							da.comment = "Unknown error";
 							break;
 					}
+				}
 				else if ((da.warnings & DAW_PRIV) != 0 && !privileged)
 					da.comment = "Privileged command";
 				else if ((da.warnings & DAW_IO) != 0 && !iocommand)
@@ -2563,7 +2551,6 @@ namespace Disassembler
 					da.comment = "LOCK prefix";
 				else if ((da.warnings & DAW_STACK) != 0 && !stackalign)
 					da.comment = "Unaligned stack operation";
-				;
 			};
 
 			return da;
