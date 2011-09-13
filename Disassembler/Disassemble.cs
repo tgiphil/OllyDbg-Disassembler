@@ -78,6 +78,11 @@ namespace Disassembler
 			return (short)this.GetUShort(index);
 		}
 
+		public int GetInt(int index)
+		{
+			return (int)(this.GetUShort(index) + (this.GetUShort(index + 2) << 16));
+		}
+
 		public uint GetUInt(int index)
 		{
 			return (uint)(this.GetUShort(index) + (this.GetUShort(index + 2) << 16));
@@ -96,6 +101,32 @@ namespace Disassembler
 
 	#endregion // Helpers
 
+	#region Result Class
+	
+	// Results of disassembling
+	public class t_disasm
+	{
+		public ulong ip; // Instruction pointer
+		public StringBuilder dump = new StringBuilder(); // Hexadecimal dump of the command
+		public StringBuilder result = new StringBuilder(); // Disassembled command
+		public string comment; // Brief comment
+		public int cmdtype; // One of C_xxx
+		public int memtype; // Type of addressed variable in memory
+		public int nprefix; // Number of prefixes
+		public int indexed; // Address contains register(s)
+		public ulong jmpconst; // Constant jump address
+		public ulong jmptable; // Possible address of switch table
+		public ulong adrconst; // Constant part of address
+		public ulong immconst; // Immediate constant
+		public int zeroconst; // Whether contains zero constant
+		public int fixupoffset; // Possible offset of 32-bit fixups
+		public int fixupsize; // Possible total size of fixups or 0
+		public int error; // Error while disassembling command
+		public int warnings; // Combination of DAW_xxx
+	} ;
+
+#endregion
+
 	public class Disassemble
 	{
 
@@ -105,140 +136,138 @@ namespace Disassembler
 		//////////////////////////// DISASSEMBLER FUNCTIONS ////////////////////////////
 
 		// Work variables of disassembler
-		int datasize;           // Size of data (1,2,4 bytes)
-		int addrsize;           // Size of address (2 or 4 bytes)
-		int segprefix;            // Segment override prefix or SEG_UNDEF
-		bool hasrm;                // Command has ModR/M byte
-		bool hassib;               // Command has SIB byte
-		int dispsize;             // Size of displacement (if any)
-		int immsize;              // Size of immediate data (if any)
-		int softerror;            // Noncritical disassembler error
-		int ndump;                // Current length of command dump
-		bool addcomment = true;           // Comment value of operand
+		protected int datasize; // Size of data (1,2,4 bytes)
+		protected int addrsize; // Size of address (2 or 4 bytes)
+		protected int segprefix; // Segment override prefix or SEG_UNDEF
+		protected bool hasrm; // Command has ModR/M byte
+		protected bool hassib; // Command has SIB byte
+		protected int dispsize; // Size of displacement (if any)
+		protected int immsize; // Size of immediate data (if any)
+		protected int softerror; // Noncritical disassembler error
+		protected bool addcomment = true; // Comment value of operand
 
 		// Copy of input parameters of function Disasm()	
-		ByteStream cmd;		// Pointer to binary data
-		int pfixup = -1;	// Pointer to possible fixups or NULL (-1)	
-		int size;			// Remaining size of the command buffer
-		t_disasm da;		// Pointer to disassembly results	
-		int mode;			// Disassembly mode (DISASM_xxx)
+		protected ByteStream cmd;		// Pointer to binary data
+		protected int pfixup = -1;	// Pointer to possible fixups or NULL (-1)	
+		protected int size;			// Remaining size of the command buffer
+		protected t_disasm da;		// Pointer to disassembly results	
+		protected int mode;			// Disassembly mode (DISASM_xxx)
 
 		// Global Variables
-		bool ideal = true;			// Force IDEAL decoding mode
-		bool showmemsize = true;	// Always show memory size
-		bool putdefseg = false;		// Display default segments in listing
-		bool shownear = true;             // Show NEAR modifiers
-		bool shortstringcmds = true;      // Use short form of string commands
-		int sizesens = 0;             // How to decode size-sensitive mnemonics
-		bool symbolic = true;             // Show symbolic addresses in disasm
-		bool farcalls = true;             // Accept far calls, returns & addresses
-		bool decodevxd = true;            // Decode VxD calls (Win95/98)
-		bool privileged = true;           // Accept privileged commands
-		bool iocommand = true;            // Accept I/O commands
-		bool badshift = false;             // Accept shift out of range 1..31
-		bool extraprefix = false;         // Accept superfluous prefixes
-		bool lockedbus = true;            // Accept LOCK prefixes
-		bool stackalign = true;           // Accept unaligned stack operations
-		bool iswindowsnt = false;         // When checking for dangers, assume NT
-		//bool tabarguments = false;         // Tab between mnemonic and arguments
+		public bool ideal = true;			// Force IDEAL decoding mode
+		public bool showmemsize = true;	// Always show memory size
+		public bool putdefseg = false;		// Display default segments in listing
+		public bool shownear = true; // Show NEAR modifiers
+		public bool shortstringcmds = true; // Use short form of string commands
+		public int sizesens = 0; // How to decode size-sensitive mnemonics
+		public bool symbolic = true; // Show symbolic addresses in disasm
+		public bool farcalls = true; // Accept far calls, returns & addresses
+		public bool decodevxd = true; // Decode VxD calls (Win95/98)
+		public bool privileged = true; // Accept privileged commands
+		public bool iocommand = true; // Accept I/O commands
+		public bool badshift = false; // Accept shift out of range 1..31
+		public bool extraprefix = false; // Accept superfluous prefixes
+		public bool lockedbus = true; // Accept LOCK prefixes
+		public bool stackalign = true; // Accept unaligned stack operations
+		public bool iswindowsnt = false; // When checking for dangers, assume NT
 
 		#endregion // Data
 
 		#region Constants
 
-		const int NEGLIMIT = (-16384);   // Limit to display constants as signed
-		const int PSEUDOOP = 128;   // Base for pseudooperands
+		const int NEGLIMIT = (-16384); // Limit to display constants as signed
+		const int PSEUDOOP = 128; // Base for pseudooperands
 
 		// Special command features.
-		const int WW = 0x01;   // Bit W (size of operand)
-		const int SS = 0x02;   // Bit S (sign extention of immediate)
-		const int WS = 0x03;   // Bits W and S
-		const int W3 = 0x08;   // Bit W at position 3
-		const int CC = 0x10;   // Conditional jump
-		const int FF = 0x20;   // Forced 16-bit size
-		const int LL = 0x40;   // Conditional loop
-		const int PR = 0x80;   // Protected command
-		const int WP = 0x81;   // I/O command with bit W
+		const int WW = 0x01; // Bit W (size of operand)
+		const int SS = 0x02; // Bit S (sign extention of immediate)
+		const int WS = 0x03; // Bits W and S
+		const int W3 = 0x08; // Bit W at position 3
+		const int CC = 0x10; // Conditional jump
+		const int FF = 0x20; // Forced 16-bit size
+		const int LL = 0x40; // Conditional loop
+		const int PR = 0x80; // Protected command
+		const int WP = 0x81; // I/O command with bit W
 
 		// All possible types of operands in 80x86. A bit more than you expected, he?
-		const int NNN = 0;   // No operand
-		const int REG = 1;   // Integer register in Reg field
-		const int RCM = 2;   // Integer register in command byte
-		const int RG4 = 3;   // Integer 4-byte register in Reg field
-		const int RAC = 4;   // Accumulator (AL/AX/EAX, implicit)
-		const int RAX = 5;   // AX (2-byte, implicit)
-		const int RDX = 6;   // DX (16-bit implicit port address)
-		const int RCL = 7;   // Implicit CL register (for shifts)
-		const int RS0 = 8;   // Top of FPU stack (ST(0), implicit)
-		const int RST = 9;   // FPU register (ST(i)) in command byte
-		const int RMX = 10;   // MMX register MMx
-		const int R3D = 11;   // 3DNow! register MMx
-		const int MRG = 12;   // Memory/register in ModRM byte
-		const int MR1 = 13;   // 1-byte memory/register in ModRM byte
-		const int MR2 = 14;   // 2-byte memory/register in ModRM byte
-		const int MR4 = 15;   // 4-byte memory/register in ModRM byte
-		const int RR4 = 16;   // 4-byte memory/register (register only)
-		const int MR8 = 17;   // 8-byte memory/MMX register in ModRM
-		const int RR8 = 18;   // 8-byte MMX register only in ModRM
-		const int MRD = 19;   // 8-byte memory/3DNow! register in ModRM
-		const int RRD = 20;   // 8-byte memory/3DNow! (register only)
-		const int MRJ = 21;   // Memory/reg in ModRM as JUMP target
-		const int MMA = 22;   // Memory address in ModRM byte for LEA
-		const int MML = 23;   // Memory in ModRM byte (for LES)
-		const int MMS = 24;   // Memory in ModRM byte (as SEG:OFFS)
-		const int MM6 = 25;   // Memory in ModRm (6-byte descriptor)
-		const int MMB = 26;   // Two adjacent memory locations (BOUND)
-		const int MD2 = 27;   // Memory in ModRM (16-bit integer)
-		const int MB2 = 28;   // Memory in ModRM (16-bit binary)
-		const int MD4 = 29;   // Memory in ModRM byte (32-bit integer)
-		const int MD8 = 30;   // Memory in ModRM byte (64-bit integer)
-		const int MDA = 31;   // Memory in ModRM byte (80-bit BCD)
-		const int MF4 = 32;   // Memory in ModRM byte (32-bit float)
-		const int MF8 = 33;   // Memory in ModRM byte (64-bit float)
-		const int MFA = 34;   // Memory in ModRM byte (80-bit float)
-		const int MFE = 35;   // Memory in ModRM byte (FPU environment)
-		const int MFS = 36;   // Memory in ModRM byte (FPU state)
-		const int MFX = 37;   // Memory in ModRM byte (ext. FPU state)
-		const int MSO = 38;   // Source in string op's ([ESI])
-		const int MDE = 39;   // Destination in string op's ([EDI])
-		const int MXL = 40;   // XLAT operand ([EBX+AL])
-		const int IMM = 41;   // Immediate data (8 or 16/32)
-		const int IMU = 42;   // Immediate unsigned data (8 or 16/32)
-		const int VXD = 43;   // VxD service
-		const int IMX = 44;   // Immediate sign-extendable byte
-		const int C01 = 45;   // Implicit constant 1 (for shifts)
-		const int IMS = 46;   // Immediate byte (for shifts)
-		const int IM1 = 47;   // Immediate byte
-		const int IM2 = 48;   // Immediate word (ENTER/RET)
-		const int IMA = 49;   // Immediate absolute near data address
-		const int JOB = 50;   // Immediate byte offset (for jumps)
-		const int JOW = 51;   // Immediate full offset (for jumps)
-		const int JMF = 52;   // Immediate absolute far jump/call addr
-		const int SGM = 53;   // Segment register in ModRM byte
-		const int SCM = 54;   // Segment register in command byte
-		const int CRX = 55;   // Control register CRx
-		const int DRX = 56;   // Debug register DRx
+		const int NNN = 0; // No operand
+		const int REG = 1; // Integer register in Reg field
+		const int RCM = 2; // Integer register in command byte
+		const int RG4 = 3; // Integer 4-byte register in Reg field
+		const int RAC = 4; // Accumulator (AL/AX/EAX, implicit)
+		const int RAX = 5; // AX (2-byte, implicit)
+		const int RDX = 6; // DX (16-bit implicit port address)
+		const int RCL = 7; // Implicit CL register (for shifts)
+		const int RS0 = 8; // Top of FPU stack (ST(0), implicit)
+		const int RST = 9; // FPU register (ST(i)) in command byte
+		const int RMX = 10; // MMX register MMx
+		const int R3D = 11; // 3DNow! register MMx
+		const int MRG = 12; // Memory/register in ModRM byte
+		const int MR1 = 13; // 1-byte memory/register in ModRM byte
+		const int MR2 = 14; // 2-byte memory/register in ModRM byte
+		const int MR4 = 15; // 4-byte memory/register in ModRM byte
+		const int RR4 = 16; // 4-byte memory/register (register only)
+		const int MR8 = 17; // 8-byte memory/MMX register in ModRM
+		const int RR8 = 18; // 8-byte MMX register only in ModRM
+		const int MRD = 19; // 8-byte memory/3DNow! register in ModRM
+		const int RRD = 20; // 8-byte memory/3DNow! (register only)
+		const int MRJ = 21; // Memory/reg in ModRM as JUMP target
+		const int MMA = 22; // Memory address in ModRM byte for LEA
+		const int MML = 23; // Memory in ModRM byte (for LES)
+		const int MMS = 24; // Memory in ModRM byte (as SEG:OFFS)
+		const int MM6 = 25; // Memory in ModRm (6-byte descriptor)
+		const int MMB = 26; // Two adjacent memory locations (BOUND)
+		const int MD2 = 27; // Memory in ModRM (16-bit integer)
+		const int MB2 = 28; // Memory in ModRM (16-bit binary)
+		const int MD4 = 29; // Memory in ModRM byte (32-bit integer)
+		const int MD8 = 30; // Memory in ModRM byte (64-bit integer)
+		const int MDA = 31; // Memory in ModRM byte (80-bit BCD)
+		const int MF4 = 32; // Memory in ModRM byte (32-bit float)
+		const int MF8 = 33; // Memory in ModRM byte (64-bit float)
+		const int MFA = 34; // Memory in ModRM byte (80-bit float)
+		const int MFE = 35; // Memory in ModRM byte (FPU environment)
+		const int MFS = 36; // Memory in ModRM byte (FPU state)
+		const int MFX = 37; // Memory in ModRM byte (ext. FPU state)
+		const int MSO = 38; // Source in string op's ([ESI])
+		const int MDE = 39; // Destination in string op's ([EDI])
+		const int MXL = 40; // XLAT operand ([EBX+AL])
+		const int IMM = 41; // Immediate data (8 or 16/32)
+		const int IMU = 42; // Immediate unsigned data (8 or 16/32)
+		const int VXD = 43; // VxD service
+		const int IMX = 44; // Immediate sign-extendable byte
+		const int C01 = 45; // Implicit constant 1 (for shifts)
+		const int IMS = 46; // Immediate byte (for shifts)
+		const int IM1 = 47; // Immediate byte
+		const int IM2 = 48; // Immediate word (ENTER/RET)
+		const int IMA = 49; // Immediate absolute near data address
+		const int JOB = 50; // Immediate byte offset (for jumps)
+		const int JOW = 51; // Immediate full offset (for jumps)
+		const int JMF = 52; // Immediate absolute far jump/call addr
+		const int SGM = 53; // Segment register in ModRM byte
+		const int SCM = 54; // Segment register in command byte
+		const int CRX = 55; // Control register CRx
+		const int DRX = 56; // Debug register DRx
 
 		// Pseudooperands (implicit operands, never appear in assembler commands). Must
 		// have index equal to or exceeding PSEUDOOP.
-		const int PRN = (PSEUDOOP + 0);   // Near return address
-		const int PRF = (PSEUDOOP + 1);   // Far return address
-		const int PAC = (PSEUDOOP + 2);   // Accumulator (AL/AX/EAX)
-		const int PAH = (PSEUDOOP + 3);   // AH (in LAHF/SAHF commands)
-		const int PFL = (PSEUDOOP + 4);   // Lower byte of flags (in LAHF/SAHF)
-		const int PS0 = (PSEUDOOP + 5);   // Top of FPU stack (ST(0))
-		const int PS1 = (PSEUDOOP + 6);   // ST(1)
-		const int PCX = (PSEUDOOP + 7);   // CX/ECX
-		const int PDI = (PSEUDOOP + 8);   // EDI (in MMX extentions)
+		const int PRN = (PSEUDOOP + 0); // Near return address
+		const int PRF = (PSEUDOOP + 1); // Far return address
+		const int PAC = (PSEUDOOP + 2); // Accumulator (AL/AX/EAX)
+		const int PAH = (PSEUDOOP + 3); // AH (in LAHF/SAHF commands)
+		const int PFL = (PSEUDOOP + 4); // Lower byte of flags (in LAHF/SAHF)
+		const int PS0 = (PSEUDOOP + 5); // Top of FPU stack (ST(0))
+		const int PS1 = (PSEUDOOP + 6); // ST(1)
+		const int PCX = (PSEUDOOP + 7); // CX/ECX
+		const int PDI = (PSEUDOOP + 8); // EDI (in MMX extentions)
 
 		// Errors detected during command disassembling.
-		const int DAE_NOERR = 0;   // No error
-		const int DAE_BADCMD = 1;   // Unrecognized command
-		const int DAE_CROSS = 2;   // Command crosses end of memory block
-		const int DAE_BADSEG = 3;   // Undefined segment register
-		const int DAE_MEMORY = 4;   // Register where only memory allowed
-		const int DAE_REGISTER = 5;   // Memory where only register allowed
-		const int DAE_INTERN = 6;   // Internal error
+		const int DAE_NOERR = 0; // No error
+		const int DAE_BADCMD = 1; // Unrecognized command
+		const int DAE_CROSS = 2; // Command crosses end of memory block
+		const int DAE_BADSEG = 3; // Undefined segment register
+		const int DAE_MEMORY = 4; // Register where only memory allowed
+		const int DAE_REGISTER = 5; // Memory where only register allowed
+		const int DAE_INTERN = 6; // Internal error
 
 
 		////////////////////////////////////////////////////////////////////////////////
@@ -1003,28 +1032,6 @@ namespace Disassembler
 
 		#region Nested Classes and Structures
 
-		// Results of disassembling
-		public class t_disasm
-		{
-			public ulong ip;                   // Instruction pointer
-			public StringBuilder dump = new StringBuilder();        // Hexadecimal dump of the command
-			public StringBuilder result = new StringBuilder();      // Disassembled command
-			public string comment;     // Brief comment
-			public int cmdtype;              // One of C_xxx
-			public int memtype;              // Type of addressed variable in memory
-			public int nprefix;              // Number of prefixes
-			public int indexed;              // Address contains register(s)
-			public ulong jmpconst;             // Constant jump address
-			public ulong jmptable;             // Possible address of switch table
-			public ulong adrconst;             // Constant part of address
-			public ulong immconst;             // Immediate constant
-			public int zeroconst;            // Whether contains zero constant
-			public int fixupoffset;          // Possible offset of 32-bit fixups
-			public int fixupsize;            // Possible total size of fixups or 0
-			public int error;                // Error while disassembling command
-			public int warnings;             // Combination of DAW_xxx
-		} ;
-
 		public struct t_addrdec
 		{
 			public int defseg;
@@ -1039,13 +1046,13 @@ namespace Disassembler
 
 		public struct t_cmddata
 		{
-			public ulong mask;                 // Mask for first 4 bytes of the command
-			public ulong code;                 // Compare masked bytes with this
-			public int len;                  // Length of the main command code
-			public int bits;                 // Special bits within the command
-			public int arg1, arg2, arg3;       // Types of possible arguments
-			public int type;                 // C_xxx + additional information
-			public string name;                // Symbolic name for this command
+			public ulong mask; // Mask for first 4 bytes of the command
+			public ulong code; // Compare masked bytes with this
+			public int len; // Length of the main command code
+			public int bits; // Special bits within the command
+			public int arg1, arg2, arg3; // Types of possible arguments
+			public int type; // C_xxx + additional information
+			public string name; // Symbolic name for this command
 
 			public t_cmddata(ulong mask, ulong code, int len, int bits, int arg1, int arg2, int arg3, int type, string name)
 			{
@@ -1071,7 +1078,7 @@ namespace Disassembler
 		void DecodeRG(int index, int datasize, int type)
 		{
 			int sizeindex;
-			if (mode < DISASM_DATA) return;        // No need to decode 
+			if (mode < DISASM_DATA) return; // No need to decode 
 			index &= 0x07;
 			if (datasize == 1)
 				sizeindex = 0;
@@ -1207,24 +1214,24 @@ namespace Disassembler
 			{
 				da.error = DAE_CROSS;
 				return;
-			};    // ModR/M byte outside the memory block
+			}; // ModR/M byte outside the memory block
 
 			hasrm = true;
 			int dsize = datasize;// Default size of addressed reg/memory
 			int regsize = datasize;
-			int memonly = 0;                           // Register in ModM field is allowed
+			int memonly = 0; // Register in ModM field is allowed
 
 			// Size and kind of addressed memory or register in ModM has no influence on
 			// the command size, and exact calculations are omitted if only command size
 			// is requested. If register is used, optype will be incorrect and we need
 			// to correct it later.
-			int c = cmd.GetByte(1) & 0xC7;                     // Leave only Mod and M fields
+			int c = cmd.GetByte(1) & 0xC7; // Leave only Mod and M fields
 			if (mode >= DISASM_DATA)
 			{
 				bool inmemory = (c & 0xC0) != 0xC0;
 				switch (type)
 				{
-					case MRG:                        // Memory/register in ModRM byte
+					case MRG: // Memory/register in ModRM byte
 						if (inmemory)
 						{
 							if (datasize == 1) da.memtype = DEC_BYTE;
@@ -1232,79 +1239,79 @@ namespace Disassembler
 							else da.memtype = DEC_DWORD;
 						};
 						break;
-					case MRJ:                        // Memory/reg in ModRM as JUMP target
+					case MRJ: // Memory/reg in ModRM as JUMP target
 						if (datasize != 2 && inmemory)
 							da.memtype = DEC_DWORD;
 						if (mode >= DISASM_FILE && shownear)
 							da.result.Append("NEAR ");
 						break;
-					case MR1:                        // 1-byte memory/register in ModRM byte
+					case MR1: // 1-byte memory/register in ModRM byte
 						dsize = regsize = 1;
 						if (inmemory) da.memtype = DEC_BYTE; break;
-					case MR2:                        // 2-byte memory/register in ModRM byte
+					case MR2: // 2-byte memory/register in ModRM byte
 						dsize = regsize = 2;
 						if (inmemory) da.memtype = DEC_WORD; break;
-					case MR4:                        // 4-byte memory/register in ModRM byte
-					case RR4:                        // 4-byte memory/register (register only)
+					case MR4: // 4-byte memory/register in ModRM byte
+					case RR4: // 4-byte memory/register (register only)
 						dsize = regsize = 4;
 						if (inmemory) da.memtype = DEC_DWORD; break;
-					case MR8:                        // 8-byte memory/MMX register in ModRM
-					case RR8:                        // 8-byte MMX register only in ModRM
+					case MR8: // 8-byte memory/MMX register in ModRM
+					case RR8: // 8-byte MMX register only in ModRM
 						dsize = 8;
 						if (inmemory) da.memtype = DEC_QWORD; break;
-					case MRD:                        // 8-byte memory/3DNow! register in ModRM
-					case RRD:                        // 8-byte memory/3DNow! (register only)
+					case MRD: // 8-byte memory/3DNow! register in ModRM
+					case RRD: // 8-byte memory/3DNow! (register only)
 						dsize = 8;
 						if (inmemory) da.memtype = DEC_3DNOW; break;
-					case MMA:                        // Memory address in ModRM byte for LEA
+					case MMA: // Memory address in ModRM byte for LEA
 						memonly = 1; break;
-					case MML:                        // Memory in ModRM byte (for LES)
+					case MML: // Memory in ModRM byte (for LES)
 						dsize = datasize + 2; memonly = 1;
 						if (datasize == 4 && inmemory)
 							da.memtype = DEC_FWORD;
 						da.warnings |= DAW_SEGMENT;
 						break;
-					case MMS:                        // Memory in ModRM byte (as SEG:OFFS)
+					case MMS: // Memory in ModRM byte (as SEG:OFFS)
 						dsize = datasize + 2; memonly = 1;
 						if (datasize == 4 && inmemory)
 							da.memtype = DEC_FWORD;
 						if (mode >= DISASM_FILE)
 							da.result.Append(" FAR");
 						break;
-					case MM6:                        // Memory in ModRM (6-byte descriptor)
+					case MM6: // Memory in ModRM (6-byte descriptor)
 						dsize = 6; memonly = 1;
 						if (inmemory) da.memtype = DEC_FWORD; break;
-					case MMB:                        // Two adjacent memory locations (BOUND)
+					case MMB: // Two adjacent memory locations (BOUND)
 						dsize = (ideal ? datasize : datasize * 2); memonly = 1; break;
-					case MD2:                        // Memory in ModRM byte (16-bit integer)
-					case MB2:                        // Memory in ModRM byte (16-bit binary)
+					case MD2: // Memory in ModRM byte (16-bit integer)
+					case MB2: // Memory in ModRM byte (16-bit binary)
 						dsize = 2; memonly = 1;
 						if (inmemory) da.memtype = DEC_WORD; break;
-					case MD4:                        // Memory in ModRM byte (32-bit integer)
+					case MD4: // Memory in ModRM byte (32-bit integer)
 						dsize = 4; memonly = 1;
 						if (inmemory) da.memtype = DEC_DWORD; break;
-					case MD8:                        // Memory in ModRM byte (64-bit integer)
+					case MD8: // Memory in ModRM byte (64-bit integer)
 						dsize = 8; memonly = 1;
 						if (inmemory) da.memtype = DEC_QWORD; break;
-					case MDA:                        // Memory in ModRM byte (80-bit BCD)
+					case MDA: // Memory in ModRM byte (80-bit BCD)
 						dsize = 10; memonly = 1;
 						if (inmemory) da.memtype = DEC_TBYTE; break;
-					case MF4:                        // Memory in ModRM byte (32-bit float)
+					case MF4: // Memory in ModRM byte (32-bit float)
 						dsize = 4; memonly = 1;
 						if (inmemory) da.memtype = DEC_FLOAT4; break;
-					case MF8:                        // Memory in ModRM byte (64-bit float)
+					case MF8: // Memory in ModRM byte (64-bit float)
 						dsize = 8; memonly = 1;
 						if (inmemory) da.memtype = DEC_FLOAT8; break;
-					case MFA:                        // Memory in ModRM byte (80-bit float)
+					case MFA: // Memory in ModRM byte (80-bit float)
 						dsize = 10; memonly = 1;
 						if (inmemory) da.memtype = DEC_FLOAT10; break;
-					case MFE:                        // Memory in ModRM byte (FPU environment)
+					case MFE: // Memory in ModRM byte (FPU environment)
 						dsize = 28; memonly = 1; break;
-					case MFS:                        // Memory in ModRM byte (FPU state)
+					case MFS: // Memory in ModRM byte (FPU state)
 						dsize = 108; memonly = 1; break;
-					case MFX:                        // Memory in ModRM byte (ext. FPU state)
+					case MFX: // Memory in ModRM byte (ext. FPU state)
 						dsize = 512; memonly = 1; break;
-					default:                         // Operand is not in ModM!
+					default: // Operand is not in ModM!
 						da.error = DAE_INTERN;
 						break;
 				};
@@ -1313,15 +1320,15 @@ namespace Disassembler
 			// There are many possibilities to decode ModM/SIB address. The first
 			// possibility is register in ModM - general-purpose, MMX or 3DNow!
 			if ((c & 0xC0) == 0xC0)
-			{              // Decode register operand
+			{ // Decode register operand
 				if (type == MR8 || type == RR8)
-					DecodeMX(c);                     // MMX register
+					DecodeMX(c); // MMX register
 				else if (type == MRD || type == RRD)
-					DecodeNR(c);                     // 3DNow! register
+					DecodeNR(c); // 3DNow! register
 				else
-					DecodeRG(c, regsize, type);        // General-purpose register
+					DecodeRG(c, regsize, type); // General-purpose register
 				if (memonly != 0)
-					softerror = DAE_MEMORY;            // Register where only memory allowed
+					softerror = DAE_MEMORY; // Register where only memory allowed
 				return;
 			};
 			// Next possibility: 16-bit addressing mode, very seldom in 32-bit flat model
@@ -1330,10 +1337,10 @@ namespace Disassembler
 			if (addrsize == 2)
 			{
 				if (c == 0x06)
-				{                     // Special case of immediate address
+				{ // Special case of immediate address
 					dispsize = 2;
 					if (cmd.SizeLeft < 4)
-						da.error = DAE_CROSS;           // Disp16 outside the memory block
+						da.error = DAE_CROSS; // Disp16 outside the memory block
 					else if (mode >= DISASM_DATA)
 					{
 						da.adrconst = addr = cmd.GetUShort(2); //*(ushort*)(cmd + 2);
@@ -1346,13 +1353,13 @@ namespace Disassembler
 				{
 					da.indexed = 1;
 					if ((c & 0xC0) == 0x40)
-					{          // 8-bit signed displacement
+					{ // 8-bit signed displacement
 						if (cmd.SizeLeft < 3) da.error = DAE_CROSS;
 						else addr = (ulong)(cmd.GetSByte(2) & 0xFFFF); //(signed char)cmd[2] & 0xFFFF;
 						dispsize = 1;
 					}
 					else if ((c & 0xC0) == 0x80)
-					{     // 16-bit unsigned displacement
+					{ // 16-bit unsigned displacement
 						if (cmd.SizeLeft < 4) da.error = DAE_CROSS;
 						else addr = cmd.GetUShort(2); //*(ushort*)(cmd + 2);
 						dispsize = 2;
@@ -1368,10 +1375,10 @@ namespace Disassembler
 			}
 			// Next possibility: immediate 32-bit address.
 			else if (c == 0x05)
-			{                  // Special case of immediate address
+			{ // Special case of immediate address
 				dispsize = 4;
 				if (cmd.SizeLeft < 6)
-					da.error = DAE_CROSS;             // Disp32 outside the memory block
+					da.error = DAE_CROSS; // Disp32 outside the memory block
 				else if (mode >= DISASM_DATA)
 				{
 					da.adrconst = addr = cmd.GetULong(2); //*(ulong*)(cmd + 2);
@@ -1387,15 +1394,15 @@ namespace Disassembler
 			}
 			// Next possibility: 32-bit address with SIB byte.
 			else if ((c & 0x07) == 0x04)
-			{         // SIB addresation
+			{ // SIB addresation
 				int sib = cmd.GetByte(2);
 				hassib = true;
 				string s = string.Empty;	//*s = '\0';
 				if (c == 0x04 && (sib & 0x07) == 0x05)
 				{
-					dispsize = 4;                      // Immediate address without base
+					dispsize = 4; // Immediate address without base
 					if (cmd.SizeLeft < 7)
-						da.error = DAE_CROSS;           // Disp32 outside the memory block
+						da.error = DAE_CROSS; // Disp32 outside the memory block
 					else
 					{
 						da.adrconst = addr = cmd.GetULong(3); // *(ulong*)(cmd + 3);
@@ -1406,7 +1413,7 @@ namespace Disassembler
 						da.fixupsize += 4;
 						if (addr == 0) da.zeroconst = 1;
 						if ((sib & 0x38) != 0x20)
-						{      // Index register present
+						{ // Index register present
 							da.indexed = 1;
 							if (type == MRJ) da.jmptable = addr;
 						};
@@ -1414,9 +1421,9 @@ namespace Disassembler
 					};
 				}
 				else
-				{                             // Base and, eventually, displacement
+				{ // Base and, eventually, displacement
 					if ((c & 0xC0) == 0x40)
-					{          // 8-bit displacement
+					{ // 8-bit displacement
 						dispsize = 1;
 						if (cmd.SizeLeft < 4)
 							da.error = DAE_CROSS;
@@ -1427,10 +1434,10 @@ namespace Disassembler
 						};
 					}
 					else if ((c & 0xC0) == 0x80)
-					{     // 32-bit displacement
+					{ // 32-bit displacement
 						dispsize = 4;
 						if (cmd.SizeLeft < 7)
-							da.error = DAE_CROSS;         // Disp32 outside the memory block
+							da.error = DAE_CROSS; // Disp32 outside the memory block
 						else
 						{
 							da.adrconst = addr = cmd.GetULong(3); // *(ulong*)(cmd + 3);
@@ -1455,7 +1462,7 @@ namespace Disassembler
 					};
 				};
 				if ((sib & 0x38) != 0x20)
-				{          // Scaled index present
+				{ // Scaled index present
 					if ((sib & 0xC0) == 0x40) da.indexed = 2;
 					else if ((sib & 0xC0) == 0x80) da.indexed = 4;
 					else if ((sib & 0xC0) == 0xC0) da.indexed = 8;
@@ -1464,7 +1471,7 @@ namespace Disassembler
 				if (mode >= DISASM_FILE && da.error == DAE_NOERR)
 				{
 					if ((sib & 0x38) != 0x20)
-					{        // Scaled index present
+					{ // Scaled index present
 						if (string.IsNullOrEmpty(s)) //if (*s != '\0') 
 							s = s + '+'; //strcat(s, "+");
 
@@ -1473,14 +1480,14 @@ namespace Disassembler
 
 						if ((sib & 0xC0) == 0x40)
 						{
-							da.jmptable = 0;              // Hardly a switch!
+							da.jmptable = 0; // Hardly a switch!
 							s = s + "*2"; //strcat(s, "*2");
 						}
 						else if ((sib & 0xC0) == 0x80)
 							s = s + "*4"; //strcat(s, "*4");
 						else if ((sib & 0xC0) == 0xC0)
 						{
-							da.jmptable = 0;              // Hardly a switch!
+							da.jmptable = 0; // Hardly a switch!
 							s = s + "*8"; //strcat(s, "*8");
 						};
 					};
@@ -1489,7 +1496,7 @@ namespace Disassembler
 			}
 			// Last possibility: 32-bit address without SIB byte.
 			else
-			{                               // No SIB
+			{ // No SIB
 				if ((c & 0xC0) == 0x40)
 				{
 					dispsize = 1;
@@ -1505,7 +1512,7 @@ namespace Disassembler
 				{
 					dispsize = 4;
 					if (cmd.SizeLeft < 6)
-						da.error = DAE_CROSS;           // Disp32 outside the memory block
+						da.error = DAE_CROSS; // Disp32 outside the memory block
 					else
 					{
 						da.adrconst = addr = cmd.GetULong(2); // *(ulong*)(cmd + 2);
@@ -1531,7 +1538,7 @@ namespace Disassembler
 		// address and contents.
 		void DecodeSO()
 		{
-			if (mode < DISASM_FILE) return;        // No need to decode
+			if (mode < DISASM_FILE) return; // No need to decode
 			if (datasize == 1) da.memtype = DEC_BYTE;
 			else if (datasize == 2) da.memtype = DEC_WORD;
 			else if (datasize == 4) da.memtype = DEC_DWORD;
@@ -1545,20 +1552,20 @@ namespace Disassembler
 		void DecodeDE()
 		{
 			int seg;
-			if (mode < DISASM_FILE) return;        // No need to decode
+			if (mode < DISASM_FILE) return; // No need to decode
 			if (datasize == 1) da.memtype = DEC_BYTE;
 			else if (datasize == 2) da.memtype = DEC_WORD;
 			else if (datasize == 4) da.memtype = DEC_DWORD;
 			da.indexed = 1;
-			seg = segprefix; segprefix = SEG_ES;     // Fake Memadr by changing segment prefix
+			seg = segprefix; segprefix = SEG_ES; // Fake Memadr by changing segment prefix
 			Memadr(SEG_DS, regname[addrsize == 2 ? 1 : 2, REG_EDI], 0L, datasize);
-			segprefix = seg;                       // Restore segment prefix
+			segprefix = seg; // Restore segment prefix
 		}
 
 		// Decode XLAT operand and, if available, dump address and contents.
 		void DecodeXL()
 		{
-			if (mode < DISASM_FILE) return;        // No need to decode
+			if (mode < DISASM_FILE) return; // No need to decode
 			da.memtype = DEC_BYTE;
 			da.indexed = 1;
 			Memadr(SEG_DS, (addrsize == 2 ? "BX+AL" : "EBX+AL"), 0L, 1);
@@ -1570,7 +1577,7 @@ namespace Disassembler
 		// Note that in most cases immediate operands are not shown in comment window.
 		void DecodeIM(int constsize, int sxt, int type)
 		{
-			immsize += constsize;                    // Allows several immediate operands
+			immsize += constsize; // Allows several immediate operands
 			if (mode < DISASM_DATA) return;
 			int l = 1 + (hasrm ? 1 : 0) + (hassib ? 1 : 0) + dispsize + (immsize - constsize);
 			long data = 0;
@@ -1632,7 +1639,7 @@ namespace Disassembler
 		// Decode VxD service name (always 4-byte).
 		void DecodeVX()
 		{
-			immsize += 4;                          // Allows several immediate operands
+			immsize += 4; // Allows several immediate operands
 			if (mode < DISASM_DATA) return;
 			int l = 1 + (hasrm ? 1 : 0) + (hassib ? 1 : 0) + dispsize + (immsize - 4);
 			if (cmd.SizeLeft < l + 4)
@@ -1707,12 +1714,14 @@ namespace Disassembler
 				da.error = DAE_CROSS;
 				return;
 			};
-			dispsize = (int)offsize;                    // Interpret offset as displacement
+			dispsize = (int)offsize; // Interpret offset as displacement
 			if (mode < DISASM_DATA) return;
 			if (offsize == 1)
 				addr = (ulong)(cmd.GetSByte(1) + (long)nextip); // (signed char)cmd[1]+nextip;
 			else if (offsize == 2)
 				addr = (ulong)(cmd.GetShort(1) + (long)nextip); // *(signed short *)(cmd+1)+nextip;
+			else if (offsize == 4)
+				addr = (ulong)(cmd.GetInt(1) + (long)nextip); // *(signed short *)(cmd+1)+nextip;
 			else
 				addr = cmd.GetULong(1) + nextip; // *(ulong*)(cmd + 1) + nextip;
 			if (datasize == 2)
@@ -1753,12 +1762,12 @@ namespace Disassembler
 			{
 				da.error = DAE_CROSS; return;
 			};
-			dispsize = addrsize; immsize = 2;        // Non-trivial but allowed interpretation
+			dispsize = addrsize; immsize = 2; // Non-trivial but allowed interpretation
 			if (mode < DISASM_DATA) return;
 			if (addrsize == 2)
 			{
 				addr = cmd.GetUShort(1); // *(ushort*)(cmd + 1);
-				seg = cmd.GetUShort(3);  // *(ushort*)(cmd + 3);
+				seg = cmd.GetUShort(3); // *(ushort*)(cmd + 3);
 			}
 			else
 			{
@@ -1780,7 +1789,7 @@ namespace Disassembler
 		{
 			if (mode < DISASM_DATA) return;
 			index &= 0x07;
-			if (index >= 6) softerror = DAE_BADSEG;  // Undefined segment register
+			if (index >= 6) softerror = DAE_BADSEG; // Undefined segment register
 			if (mode >= DISASM_FILE)
 			{
 				//sprintf(da.result + nresult, "%s", segname[index]);
@@ -1827,36 +1836,36 @@ namespace Disassembler
 		{
 			int c, sib;
 			ulong offset;
-			if (cmd.SizeLeft < 3) return -1;               // Suffix outside the memory block
+			if (cmd.SizeLeft < 3) return -1; // Suffix outside the memory block
 			offset = 3;
-			c = cmd.GetByte(2) & 0xC7;                     // Leave only Mod and M fields
+			c = cmd.GetByte(2) & 0xC7; // Leave only Mod and M fields
 			// Register in ModM - general-purpose, MMX or 3DNow!
 			if ((c & 0xC0) == 0xC0)
 				;
 			// 16-bit addressing mode, SIB byte is never used here.
 			else if (addrsize == 2)
 			{
-				if (c == 0x06)                       // Special case of immediate address
+				if (c == 0x06) // Special case of immediate address
 					offset += 2;
-				else if ((c & 0xC0) == 0x40)         // 8-bit signed displacement
+				else if ((c & 0xC0) == 0x40) // 8-bit signed displacement
 					offset++;
-				else if ((c & 0xC0) == 0x80)         // 16-bit unsigned displacement
+				else if ((c & 0xC0) == 0x80) // 16-bit unsigned displacement
 					offset += 2;
 				;
 			}
 			// Immediate 32-bit address.
-			else if (c == 0x05)                    // Special case of immediate address
+			else if (c == 0x05) // Special case of immediate address
 				offset += 4;
 			// 32-bit address with SIB byte.
 			else if ((c & 0x07) == 0x04)
-			{         // SIB addresation
-				if (cmd.SizeLeft < 4) return -1;             // Suffix outside the memory block
+			{ // SIB addresation
+				if (cmd.SizeLeft < 4) return -1; // Suffix outside the memory block
 				sib = cmd.GetByte(3); offset++;
 				if (c == 0x04 && (sib & 0x07) == 0x05)
-					offset += 4;                       // Immediate address without base
-				else if ((c & 0xC0) == 0x40)         // 8-bit displacement
+					offset += 4; // Immediate address without base
+				else if ((c & 0xC0) == 0x40) // 8-bit displacement
 					offset += 1;
-				else if ((c & 0xC0) == 0x80)         // 32-bit dislacement
+				else if ((c & 0xC0) == 0x80) // 32-bit dislacement
 					offset += 4;
 				;
 			}
@@ -1866,7 +1875,7 @@ namespace Disassembler
 			else if ((c & 0xC0) == 0x80)
 				offset += 4;
 			if ((int)offset >= cmd.SizeLeft)
-				return -1;         // Suffix outside the memory block
+				return -1; // Suffix outside the memory block
 			return (int)cmd.GetLong((int)offset); // FIXME: GetInt
 		}
 
@@ -1878,22 +1887,22 @@ namespace Disassembler
 			ulong cond, temp;
 			switch (code & 0x0E)
 			{
-				case 0:                            // If overflow
+				case 0: // If overflow
 					cond = flags & 0x0800; break;
-				case 2:                            // If below
+				case 2: // If below
 					cond = flags & 0x0001; break;
-				case 4:                            // If equal
+				case 4: // If equal
 					cond = flags & 0x0040; break;
-				case 6:                            // If below or equal
+				case 6: // If below or equal
 					cond = flags & 0x0041; break;
-				case 8:                            // If sign
+				case 8: // If sign
 					cond = flags & 0x0080; break;
-				case 10:                           // If parity
+				case 10: // If parity
 					cond = flags & 0x0004; break;
-				case 12:                           // If less
+				case 12: // If less
 					temp = flags & 0x0880;
 					cond = (temp == 0x0800 || temp == 0x0080) ? (ulong)0 : (ulong)1; break;
-				case 14:                           // If less or equal
+				case 14: // If less or equal
 					temp = flags & 0x0880;
 					cond = ((temp == 0x0800 || temp == 0x0080 || (flags & 0x0040) != 0)) ? (ulong)0 : (ulong)1; break;
 				default:
@@ -1903,11 +1912,17 @@ namespace Disassembler
 			if ((code & 0x01) == 0)
 				return (cond != 0);
 			else
-				return (cond == 0);               // Invert condition
+				return (cond == 0); // Invert condition
 		}
 
-		public void Disasm(ByteStream src, ulong srcip, t_disasm disasm, int disasmmode)
+		#endregion //Methods
+
+		#region Main Method
+
+		public t_disasm Disasm(ByteStream src, ulong srcip, int disasmmode)
 		{
+			da = new t_disasm();
+
 			int i, j, operand, mnemosize, arg;
 			ulong u;
 
@@ -1916,14 +1931,13 @@ namespace Disassembler
 			string pname;
 
 			// Prepare disassembler variables and initialize structure disasm.
-			datasize = addrsize = 4;                 // 32-bit code and data segments only!
+			datasize = addrsize = 4; // 32-bit code and data segments only!
 			segprefix = SEG_UNDEF;
 			hasrm = false;
 			hassib = false;
 			dispsize = immsize = 0;
-			bool lockprefix = false;                      // Non-zero if lock prefix present
+			bool lockprefix = false; // Non-zero if lock prefix present
 			byte repprefix = 0; // REPxxx prefix or 0
-			ndump = 0;
 
 			cmd = new ByteStream(src, 0);
 			//size = srcsize;
@@ -1931,7 +1945,7 @@ namespace Disassembler
 			pfixup = -1;
 			softerror = 0;
 			bool is3dnow = false;
-			da = disasm;
+
 			da.ip = srcip;
 			da.comment = string.Empty;
 			da.cmdtype = C_BAD; da.nprefix = 0;
@@ -1943,7 +1957,7 @@ namespace Disassembler
 			da.fixupsize = 0;
 			da.warnings = 0;
 			da.error = DAE_NOERR;
-			mode = disasmmode;                     // No need to use register contents
+			mode = disasmmode; // No need to use register contents
 
 			// Correct 80x86 command may theoretically contain up to 4 prefixes belonging
 			// to different prefix groups. This limits maximal possible size of the
@@ -1954,7 +1968,7 @@ namespace Disassembler
 			bool repeated = false;
 			while (size > 0)
 			{
-				bool isprefix = true;                        // Assume that there is some prefix
+				bool isprefix = true; // Assume that there is some prefix
 				switch (cmd[0])
 				{
 					case 0x26: if (segprefix == SEG_UNDEF) segprefix = SEG_ES;
@@ -1982,7 +1996,7 @@ namespace Disassembler
 					default: isprefix = false; break;
 				};
 				if (!isprefix || repeated)
-					break;                           // No more prefixes or duplicated prefix
+					break; // No more prefixes or duplicated prefix
 
 				if (mode >= DISASM_FILE)
 					//	sprintf(da.dump + ndump, "%02X:", *cmd);
@@ -1999,7 +2013,7 @@ namespace Disassembler
 			{
 				if (mode >= DISASM_FILE)
 				{
-					da.dump[3] = '\0';                // Leave only first dumped prefix
+					da.dump[3] = '\0'; // Leave only first dumped prefix
 					da.nprefix = 1;
 					switch (cmd[(int)-(long)u])
 					{
@@ -2026,7 +2040,8 @@ namespace Disassembler
 				if (lockprefix)
 					da.warnings |= DAW_LOCK;
 				da.cmdtype = C_RARE;
-				return; // 1;                          // Any prefix is 1 byte long
+				
+				return da; // 1; // Any prefix is 1 byte long
 			};
 			// If lock prefix available, display it and forget, because it has no
 			// influence on decoding of rest of the command.
@@ -2042,14 +2057,14 @@ namespace Disassembler
 			if (cmd.SizeLeft > 0) code = cmd[0];
 			if (cmd.SizeLeft > 1) code = code + (ulong)(cmd[1] << 8);
 			if (cmd.SizeLeft > 2) code = code + (ulong)(cmd[2] << 16);
-			if (repprefix != 0)                    // RER/REPE/REPNE is considered to be
-				code = (code << 8) | repprefix;        // part of command.
+			if (repprefix != 0) // RER/REPE/REPNE is considered to be
+				code = (code << 8) | repprefix; // part of command.
 
 			t_cmddata pd = cmddata[0]; // Assignment to first entry is to avoid compiler error
 			int pd_index = 0;
 
 			if (decodevxd && (code & 0xFFFF) == 0x20CD)
-				pd = vxdcmd;                        // Decode VxD call (Win95/98)
+				pd = vxdcmd; // Decode VxD call (Win95/98)
 			else
 			{
 				for (pd_index = 0; pd_index < cmddata.Length; pd_index++)
@@ -2059,7 +2074,7 @@ namespace Disassembler
 						continue;
 
 					if (mode >= DISASM_FILE && shortstringcmds && (pd.arg1 == MSO || pd.arg1 == MDE || pd.arg2 == MSO || pd.arg2 == MDE))
-						continue;                      // Search short form of string command
+						continue; // Search short form of string command
 
 					break;
 				};
@@ -2088,21 +2103,21 @@ namespace Disassembler
 				};
 			};
 			if (pd.mask == 0)
-			{                   // Command not found
+			{ // Command not found
 				da.cmdtype = C_BAD;
 				if (cmd.SizeLeft < 2) da.error = DAE_CROSS;
 				else da.error = DAE_BADCMD;
 			}
 			else
-			{                               // Command recognized, decode it
+			{ // Command recognized, decode it
 				da.cmdtype = pd.type;
-				cxsize = datasize;                   // Default size of ECX used as counter
+				cxsize = datasize; // Default size of ECX used as counter
 				if (segprefix == SEG_FS || segprefix == SEG_GS || lockprefix)
-					da.cmdtype |= C_RARE;             // These prefixes are rare
+					da.cmdtype |= C_RARE; // These prefixes are rare
 				if (pd.bits == PR)
-					da.warnings |= DAW_PRIV;          // Privileged command (ring 0)
+					da.warnings |= DAW_PRIV; // Privileged command (ring 0)
 				else if (pd.bits == WP)
-					da.warnings |= DAW_IO;            // I/O command
+					da.warnings |= DAW_IO; // I/O command
 				// Win32 programs usually try to keep stack dword-aligned, so INC ESP
 				// (44) and DEC ESP (4C) usually don't appear in real code. Also check for
 				// ADD ESP,imm and SUB ESP,imm (81,C4,imm32; 83,C4,imm8; 81,EC,imm32;
@@ -2137,11 +2152,11 @@ namespace Disassembler
 				// Some commands either feature non-standard data size or have bit which
 				// allows to select data size.
 				if ((pd.bits & WW) != 0 && (cmd[0] & WW) == 0)
-					datasize = 1;                      // Bit W in command set to 0
+					datasize = 1; // Bit W in command set to 0
 				else if ((pd.bits & W3) != 0 && (cmd[0] & W3) == 0)
-					datasize = 1;                      // Another position of bit W
+					datasize = 1; // Another position of bit W
 				else if ((pd.bits & FF) != 0)
-					datasize = 2;                      // Forced word (2-byte) size
+					datasize = 2; // Forced word (2-byte) size
 				// Some commands either have mnemonics which depend on data size (8/16 bits
 				// or 32 bits, like CWD/CDQ), or have several different mnemonics (like
 				// JNZ/JNE). First case is marked by either '&' (mnemonic depends on
@@ -2162,7 +2177,7 @@ namespace Disassembler
 						for (i = 0, j = 1; pd.name[j] != '\0'; j++)
 						{
 							if (pd.name[j] == ':')
-							{      // Separator between 16/32 mnemonics
+							{ // Separator between 16/32 mnemonics
 								if (mnemosize == 4) i = 0;
 								else break;
 							}
@@ -2191,7 +2206,7 @@ namespace Disassembler
 						//for (i = 0; name[i] != '\0'; i++)
 						//{
 						//    if (name[i] == ',')
-						//    {          // Use main mnemonic
+						//    { // Use main mnemonic
 						//        name[i] = '\0';
 						//        break;
 						//    };
@@ -2223,7 +2238,7 @@ namespace Disassembler
 				// are allowed.
 				for (operand = 0; operand < 3; operand++)
 				{
-					if (da.error == 0) break;            // Error - no sense to continue
+					if (da.error != 0) break; // Error - no sense to continue
 					// If command contains both source and destination, one usually must not
 					// decode destination to comment because it will be overwritten on the
 					// next step. Global addcomment takes care of this. Decoding routines,
@@ -2236,7 +2251,7 @@ namespace Disassembler
 					if (operand == 0) arg = pd.arg1;
 					else if (operand == 1) arg = pd.arg2;
 					else arg = pd.arg3;
-					if (arg == NNN) break;             // No more operands
+					if (arg == NNN) break; // No more operands
 					// Arguments with arg>=PSEUDOOP are assumed operands and are not
 					// displayed in disassembled result, so they require no delimiter.
 					if ((mode >= DISASM_FILE) && arg < PSEUDOOP)
@@ -2262,134 +2277,134 @@ namespace Disassembler
 					// Decode, analyse and comment next operand of the command.
 					switch (arg)
 					{
-						case REG:                      // Integer register in Reg field
+						case REG: // Integer register in Reg field
 							if (cmd.SizeLeft < 2) da.error = DAE_CROSS;
 							else DecodeRG(cmd[1] >> 3, datasize, REG);
 							hasrm = true; break;
-						case RCM:                      // Integer register in command byte
+						case RCM: // Integer register in command byte
 							DecodeRG(cmd[0], datasize, RCM); break;
-						case RG4:                      // Integer 4-byte register in Reg field
+						case RG4: // Integer 4-byte register in Reg field
 							if (cmd.SizeLeft < 2) da.error = DAE_CROSS;
 							else DecodeRG(cmd[1] >> 3, 4, RG4);
 							hasrm = true; break;
-						case RAC:                      // Accumulator (AL/AX/EAX, implicit)
+						case RAC: // Accumulator (AL/AX/EAX, implicit)
 							DecodeRG(REG_EAX, datasize, RAC); break;
-						case RAX:                      // AX (2-byte, implicit)
+						case RAX: // AX (2-byte, implicit)
 							DecodeRG(REG_EAX, 2, RAX); break;
-						case RDX:                      // DX (16-bit implicit port address)
+						case RDX: // DX (16-bit implicit port address)
 							DecodeRG(REG_EDX, 2, RDX); break;
-						case RCL:                      // Implicit CL register (for shifts)
+						case RCL: // Implicit CL register (for shifts)
 							DecodeRG(REG_ECX, 1, RCL); break;
-						case RS0:                      // Top of FPU stack (ST(0))
+						case RS0: // Top of FPU stack (ST(0))
 							DecodeST(0, 0); break;
-						case RST:                      // FPU register (ST(i)) in command byte
+						case RST: // FPU register (ST(i)) in command byte
 							DecodeST(cmd[0], 0); break;
-						case RMX:                      // MMX register MMx
+						case RMX: // MMX register MMx
 							if (cmd.SizeLeft < 2) da.error = DAE_CROSS;
 							else DecodeMX(cmd[1] >> 3);
 							hasrm = true; break;
-						case R3D:                      // 3DNow! register MMx
+						case R3D: // 3DNow! register MMx
 							if (cmd.SizeLeft < 2) da.error = DAE_CROSS;
 							else DecodeNR(cmd[1] >> 3);
 							hasrm = true; break;
-						case MRG:                      // Memory/register in ModRM byte
-						case MRJ:                      // Memory/reg in ModRM as JUMP target
-						case MR1:                      // 1-byte memory/register in ModRM byte
-						case MR2:                      // 2-byte memory/register in ModRM byte
-						case MR4:                      // 4-byte memory/register in ModRM byte
-						case MR8:                      // 8-byte memory/MMX register in ModRM
-						case MRD:                      // 8-byte memory/3DNow! register in ModRM
-						case MMA:                      // Memory address in ModRM byte for LEA
-						case MML:                      // Memory in ModRM byte (for LES)
-						case MM6:                      // Memory in ModRm (6-byte descriptor)
-						case MMB:                      // Two adjacent memory locations (BOUND)
-						case MD2:                      // Memory in ModRM byte (16-bit integer)
-						case MB2:                      // Memory in ModRM byte (16-bit binary)
-						case MD4:                      // Memory in ModRM byte (32-bit integer)
-						case MD8:                      // Memory in ModRM byte (64-bit integer)
-						case MDA:                      // Memory in ModRM byte (80-bit BCD)
-						case MF4:                      // Memory in ModRM byte (32-bit float)
-						case MF8:                      // Memory in ModRM byte (64-bit float)
-						case MFA:                      // Memory in ModRM byte (80-bit float)
-						case MFE:                      // Memory in ModRM byte (FPU environment)
-						case MFS:                      // Memory in ModRM byte (FPU state)
-						case MFX:                      // Memory in ModRM byte (ext. FPU state)
+						case MRG: // Memory/register in ModRM byte
+						case MRJ: // Memory/reg in ModRM as JUMP target
+						case MR1: // 1-byte memory/register in ModRM byte
+						case MR2: // 2-byte memory/register in ModRM byte
+						case MR4: // 4-byte memory/register in ModRM byte
+						case MR8: // 8-byte memory/MMX register in ModRM
+						case MRD: // 8-byte memory/3DNow! register in ModRM
+						case MMA: // Memory address in ModRM byte for LEA
+						case MML: // Memory in ModRM byte (for LES)
+						case MM6: // Memory in ModRm (6-byte descriptor)
+						case MMB: // Two adjacent memory locations (BOUND)
+						case MD2: // Memory in ModRM byte (16-bit integer)
+						case MB2: // Memory in ModRM byte (16-bit binary)
+						case MD4: // Memory in ModRM byte (32-bit integer)
+						case MD8: // Memory in ModRM byte (64-bit integer)
+						case MDA: // Memory in ModRM byte (80-bit BCD)
+						case MF4: // Memory in ModRM byte (32-bit float)
+						case MF8: // Memory in ModRM byte (64-bit float)
+						case MFA: // Memory in ModRM byte (80-bit float)
+						case MFE: // Memory in ModRM byte (FPU environment)
+						case MFS: // Memory in ModRM byte (FPU state)
+						case MFX: // Memory in ModRM byte (ext. FPU state)
 							DecodeMR(arg); break;
-						case MMS:                      // Memory in ModRM byte (as SEG:OFFS)
+						case MMS: // Memory in ModRM byte (as SEG:OFFS)
 							DecodeMR(arg);
 							da.warnings |= DAW_FARADDR; break;
-						case RR4:                      // 4-byte memory/register (register only)
-						case RR8:                      // 8-byte MMX register only in ModRM
-						case RRD:                      // 8-byte memory/3DNow! (register only)
+						case RR4: // 4-byte memory/register (register only)
+						case RR8: // 8-byte MMX register only in ModRM
+						case RRD: // 8-byte memory/3DNow! (register only)
 							if ((cmd[1] & 0xC0) != 0xC0) softerror = DAE_REGISTER;
 							DecodeMR(arg); break;
-						case MSO:                      // Source in string op's ([ESI])
+						case MSO: // Source in string op's ([ESI])
 							DecodeSO(); break;
-						case MDE:                      // Destination in string op's ([EDI])
+						case MDE: // Destination in string op's ([EDI])
 							DecodeDE(); break;
-						case MXL:                      // XLAT operand ([EBX+AL])
+						case MXL: // XLAT operand ([EBX+AL])
 							DecodeXL(); break;
-						case IMM:                      // Immediate data (8 or 16/32)
-						case IMU:                      // Immediate unsigned data (8 or 16/32)
+						case IMM: // Immediate data (8 or 16/32)
+						case IMU: // Immediate unsigned data (8 or 16/32)
 							if ((pd.bits & SS) != 0 && (cmd[0] & 0x02) != 0)
 								DecodeIM(1, datasize, arg);
 							else
 								DecodeIM(datasize, 0, arg);
 							break;
-						case VXD:                      // VxD service (32-bit only)
+						case VXD: // VxD service (32-bit only)
 							DecodeVX(); break;
-						case IMX:                      // Immediate sign-extendable byte
+						case IMX: // Immediate sign-extendable byte
 							DecodeIM(1, datasize, arg); break;
-						case C01:                      // Implicit constant 1 (for shifts)
+						case C01: // Implicit constant 1 (for shifts)
 							DecodeC1(); break;
-						case IMS:                      // Immediate byte (for shifts)
-						case IM1:                      // Immediate byte
+						case IMS: // Immediate byte (for shifts)
+						case IM1: // Immediate byte
 							DecodeIM(1, 0, arg); break;
-						case IM2:                      // Immediate word (ENTER/RET)
+						case IM2: // Immediate word (ENTER/RET)
 							DecodeIM(2, 0, arg);
 							if ((da.immconst & 0x03) != 0) da.warnings |= DAW_STACK;
 							break;
-						case IMA:                      // Immediate absolute near data address
+						case IMA: // Immediate absolute near data address
 							DecodeIA(); break;
-						case JOB:                      // Immediate byte offset (for jumps)
+						case JOB: // Immediate byte offset (for jumps)
 							DecodeRJ(1, srcip + 2); break;
-						case JOW:                      // Immediate full offset (for jumps)
+						case JOW: // Immediate full offset (for jumps)
 							DecodeRJ((ulong)datasize, (ulong)((int)srcip + datasize + 1)); break;	// FIXME
-						case JMF:                      // Immediate absolute far jump/call addr
+						case JMF: // Immediate absolute far jump/call addr
 							DecodeJF();
 							da.warnings |= DAW_FARADDR; break;
-						case SGM:                      // Segment register in ModRM byte
+						case SGM: // Segment register in ModRM byte
 							if (cmd.SizeLeft < 2) da.error = DAE_CROSS;
 							DecodeSG(cmd[1] >> 3); hasrm = true; break;
-						case SCM:                      // Segment register in command byte
+						case SCM: // Segment register in command byte
 							DecodeSG(cmd[0] >> 3);
 							if ((da.cmdtype & C_TYPEMASK) == C_POP) da.warnings |= DAW_SEGMENT;
 							break;
-						case CRX:                      // Control register CRx
+						case CRX: // Control register CRx
 							if ((cmd[1] & 0xC0) != 0xC0) da.error = DAE_REGISTER;
 							DecodeCR(cmd[1]); break;
-						case DRX:                      // Debug register DRx
+						case DRX: // Debug register DRx
 							if ((cmd[1] & 0xC0) != 0xC0) da.error = DAE_REGISTER;
 							DecodeDR(cmd[1]); break;
-						case PRN:                      // Near return address (pseudooperand)
+						case PRN: // Near return address (pseudooperand)
 							break;
-						case PRF:                      // Far return address (pseudooperand)
+						case PRF: // Far return address (pseudooperand)
 							da.warnings |= DAW_FARADDR; break;
-						case PAC:                      // Accumulator (AL/AX/EAX, pseudooperand)
+						case PAC: // Accumulator (AL/AX/EAX, pseudooperand)
 							DecodeRG(REG_EAX, datasize, PAC); break;
-						case PAH:                      // AH (in LAHF/SAHF, pseudooperand)
-						case PFL:                      // Lower byte of flags (pseudooperand)
+						case PAH: // AH (in LAHF/SAHF, pseudooperand)
+						case PFL: // Lower byte of flags (pseudooperand)
 							break;
-						case PS0:                      // Top of FPU stack (pseudooperand)
+						case PS0: // Top of FPU stack (pseudooperand)
 							DecodeST(0, 1); break;
-						case PS1:                      // ST(1) (pseudooperand)
+						case PS1: // ST(1) (pseudooperand)
 							DecodeST(1, 1); break;
-						case PCX:                      // CX/ECX (pseudooperand)
+						case PCX: // CX/ECX (pseudooperand)
 							DecodeRG(REG_ECX, cxsize, PCX); break;
-						case PDI:                      // EDI (pseudooperand in MMX extentions)
+						case PDI: // EDI (pseudooperand in MMX extentions)
 							DecodeRG(REG_EDI, 4, PDI); break;
 						default:
-							da.error = DAE_INTERN;        // Unknown argument type
+							da.error = DAE_INTERN; // Unknown argument type
 							break;
 					};
 				};
@@ -2419,7 +2434,7 @@ namespace Disassembler
 			};
 			// Right or wrong, command decoded. Now dump it.
 			if (da.error != 0)
-			{                  // Hard error in command detected
+			{ // Hard error in command detected
 				if (mode >= DISASM_FILE)
 					//nresult = sprintf(da.result, "???");
 					da.result.Append("???");
@@ -2430,7 +2445,7 @@ namespace Disassembler
 				{
 					if (mode >= DISASM_FILE)
 						//sprintf(da.dump + ndump, "%02X", *cmd);
-						da.dump.AppendFormat("{0}", cmd[0]); // FIXME: "%02X"
+						da.dump.AppendFormat("{0:X}", cmd[0]);
 
 					cmd.AdjustOffset(1);
 				};
@@ -2438,46 +2453,45 @@ namespace Disassembler
 				{
 					if (mode >= DISASM_FILE)
 						//sprintf(da.dump + ndump, "%02X", *cmd);
-						da.dump.AppendFormat("{0}", cmd[0]); // FIXME: "%02X"
+						da.dump.AppendFormat("{0:X}", cmd[0]); 
 
 					cmd.AdjustOffset(1);
 				};
 			}
 			else
-			{                               // No hard error, dump command
+			{ // No hard error, dump command
 				if (mode >= DISASM_FILE)
 				{
+					da.dump.AppendFormat("{0:X}", cmd[0]); 
 					cmd.AdjustOffset(1);
-					da.dump.AppendFormat("{0}", cmd[0]); // FIXME: "%02X"
 
 					if (hasrm)
 					{
-						cmd.AdjustOffset(1);
-						da.dump.AppendFormat("{0}", cmd[0]); // FIXME: "%02X"
+						da.dump.AppendFormat("{0:X}", cmd[0]); 
 					}
 
 					if (hassib)
 					{
+						da.dump.AppendFormat("{0:X}", cmd[0]); 
 						cmd.AdjustOffset(1);
-						da.dump.AppendFormat("{0}", cmd[0]); // FIXME: "%02X"
 					}
 
 					if (dispsize != 0)
 					{
-						da.dump[ndump++] = ' ';
+						da.dump.Append(' ');
 						for (i = 0; i < dispsize; i++)
 						{
+							da.dump.AppendFormat("{0:X}", cmd[0]); 
 							cmd.AdjustOffset(1);
-							da.dump.AppendFormat("{0}", cmd[0]); // FIXME: "%02X"
 						};
 					};
 					if (immsize != 0)
 					{
-						da.dump[ndump++] = ' ';
+						da.dump.Append(' ');
 						for (i = 0; i < immsize; i++)
 						{
+							da.dump.AppendFormat("{0:X}", cmd[0]); 
 							cmd.AdjustOffset(1);
-							da.dump.AppendFormat("{0}", cmd[0]); // FIXME: "%02X"
 						};
 					};
 				}
@@ -2494,9 +2508,9 @@ namespace Disassembler
 					if (((code ^ pdan.code) & pdan.mask) != 0)
 						continue;
 					if (pdan.type == C_DANGERLOCK && !lockprefix)
-						break;                         // Command harmless without LOCK prefix
+						break; // Command harmless without LOCK prefix
 					if (iswindowsnt && pdan.type == C_DANGER95)
-						break;                         // Command harmless under Windows NT
+						break; // Command harmless under Windows NT
 					// Dangerous command!
 					if (pdan.type == C_DANGER95) da.warnings |= DAW_DANGER95;
 					else da.warnings |= DAW_DANGEROUS;
@@ -2504,7 +2518,7 @@ namespace Disassembler
 				};
 			};
 			if (da.error == 0 && softerror != 0)
-				da.error = softerror;               // Error, but still display command
+				da.error = softerror; // Error, but still display command
 			if (mode >= DISASM_FILE)
 			{
 				if (da.error != DAE_NOERR) switch (da.error)
@@ -2537,7 +2551,6 @@ namespace Disassembler
 						da.comment = "Far call";
 					else if ((da.cmdtype & C_TYPEMASK) == C_RET)
 						da.comment = "Far return";
-					;
 				}
 				else if ((da.warnings & DAW_SEGMENT) != 0 && !farcalls)
 					da.comment = "Modification of segment register";
@@ -2552,11 +2565,10 @@ namespace Disassembler
 				;
 			};
 
-			return;
+			return da;
 		}
 
-
-		#endregion
+		#endregion // Main Method
 
 		#region Customized Methods
 

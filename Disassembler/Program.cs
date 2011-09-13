@@ -23,14 +23,14 @@ namespace Disassembler
 
 		static void Main(string[] args)
 		{
-			Disassemble.t_disasm asm = new Disassemble.t_disasm();
-
 			Disassemble disam = new Disassemble();
 
-			disam.Disasm(new ByteStream(call1), 0x450458, asm, Disassemble.DISASM_FILE);
+			t_disasm asm = disam.Disasm(new ByteStream(call1), 0x450458, Disassemble.DISASM_FILE);
+
+			Console.WriteLine(asm.result.ToString());
+			Console.WriteLine(asm.dump.ToString());
 
 			return;
-
 		}
 	}
 }
