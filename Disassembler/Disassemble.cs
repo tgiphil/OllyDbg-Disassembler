@@ -70,7 +70,7 @@ namespace Disassembler
 
 		public ushort GetUShort(int index)
 		{
-			return (ushort)(this[index] + (this[index] << 8));
+			return (ushort)(this[index] + (this[index + 1] << 8));
 		}
 
 		public short GetShort(int index)
@@ -102,7 +102,7 @@ namespace Disassembler
 	#endregion // Helpers
 
 	#region Result Class
-	
+
 	// Results of disassembling
 	public class t_disasm
 	{
@@ -125,7 +125,7 @@ namespace Disassembler
 		public int warnings; // Combination of DAW_xxx
 	} ;
 
-#endregion
+	#endregion
 
 	public class Disassemble
 	{
@@ -1727,7 +1727,8 @@ namespace Disassembler
 			if (datasize == 2)
 				addr &= 0xFFFF;
 			da.jmpconst = addr;
-			if (addr == 0) da.zeroconst = 1;
+			if (addr == 0)
+				da.zeroconst = 1;
 			if (mode >= DISASM_FILE)
 			{
 				if (offsize == 1)
@@ -1740,7 +1741,7 @@ namespace Disassembler
 
 				if (!symbolic || string.IsNullOrEmpty(name))
 					//sprintf(da.result + nresult, "%08lX", addr);
-					da.result.AppendFormat("{0}X", addr);
+					da.result.AppendFormat("{0:X}", addr);
 				else
 					//	sprintf(da.result + nresult, "%.*s", TEXTLEN - nresult - 25, name);
 					da.result.Append(name);
@@ -2040,7 +2041,7 @@ namespace Disassembler
 				if (lockprefix)
 					da.warnings |= DAW_LOCK;
 				da.cmdtype = C_RARE;
-				
+
 				return da; // 1; // Any prefix is 1 byte long
 			};
 			// If lock prefix available, display it and forget, because it has no
@@ -2453,7 +2454,7 @@ namespace Disassembler
 				{
 					if (mode >= DISASM_FILE)
 						//sprintf(da.dump + ndump, "%02X", *cmd);
-						da.dump.AppendFormat("{0:X}", cmd[0]); 
+						da.dump.AppendFormat("{0:X}", cmd[0]);
 
 					cmd.AdjustOffset(1);
 				};
@@ -2462,17 +2463,17 @@ namespace Disassembler
 			{ // No hard error, dump command
 				if (mode >= DISASM_FILE)
 				{
-					da.dump.AppendFormat("{0:X}", cmd[0]); 
+					da.dump.AppendFormat("{0:X}", cmd[0]);
 					cmd.AdjustOffset(1);
 
 					if (hasrm)
 					{
-						da.dump.AppendFormat("{0:X}", cmd[0]); 
+						da.dump.AppendFormat("{0:X}", cmd[0]);
 					}
 
 					if (hassib)
 					{
-						da.dump.AppendFormat("{0:X}", cmd[0]); 
+						da.dump.AppendFormat("{0:X}", cmd[0]);
 						cmd.AdjustOffset(1);
 					}
 
@@ -2481,7 +2482,7 @@ namespace Disassembler
 						da.dump.Append(' ');
 						for (i = 0; i < dispsize; i++)
 						{
-							da.dump.AppendFormat("{0:X}", cmd[0]); 
+							da.dump.AppendFormat("{0:X}", cmd[0]);
 							cmd.AdjustOffset(1);
 						};
 					};
@@ -2490,7 +2491,7 @@ namespace Disassembler
 						da.dump.Append(' ');
 						for (i = 0; i < immsize; i++)
 						{
-							da.dump.AppendFormat("{0:X}", cmd[0]); 
+							da.dump.AppendFormat("{0:X}", cmd[0]);
 							cmd.AdjustOffset(1);
 						};
 					};
