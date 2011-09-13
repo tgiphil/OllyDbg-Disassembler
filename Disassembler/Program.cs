@@ -23,10 +23,24 @@ namespace Disassembler
 
 		static void Main(string[] args)
 		{
-			Disassemble disam = new Disassemble();
+			t_disasm asm;
 
-			t_disasm asm = disam.Disasm(new ByteStream(call1), 0x450458, Disassemble.DISASM_FILE);
+			Disassemble disam1 = new Disassemble();
+			disam1.ideal = false;
+			disam1.putdefseg = false;
+			asm = disam1.Disasm(new ByteStream(add1), 0x400000, Disassemble.DISASM_FILE);
+			Console.WriteLine(asm.result.ToString());
+			Console.WriteLine(asm.dump.ToString());
+			
+			Disassemble disam2 = new Disassemble();
+			disam2.ideal = true;
+			disam2.putdefseg = true;
+			asm = disam2.Disasm(new ByteStream(add1), 0x400000, Disassemble.DISASM_FILE);
+			Console.WriteLine(asm.result.ToString());
+			Console.WriteLine(asm.dump.ToString());
 
+			Disassemble disam3 = new Disassemble();
+			t_disasm asm3 = disam3.Disasm(new ByteStream(call1), 0x450458, Disassemble.DISASM_FILE);
 			Console.WriteLine(asm.result.ToString());
 			Console.WriteLine(asm.dump.ToString());
 

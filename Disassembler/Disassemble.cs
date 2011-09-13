@@ -1189,13 +1189,13 @@ namespace Disassembler
 						da.result.Append('+');
 				}
 				else if (offset < 0 && offset > -16384 && !string.IsNullOrEmpty(descr))
-					da.result.AppendFormat("-%lX", -offset);
+					da.result.AppendFormat("-{0:X}", -offset);
 				else
 				{
 					if (!string.IsNullOrEmpty(descr))
 						da.result.Append('+');
 
-					da.result.AppendFormat("-%lX", offset);
+					da.result.AppendFormat("-{0:X}", offset);
 				};
 			};
 
@@ -1600,7 +1600,7 @@ namespace Disassembler
 			}
 			else
 			{
-				data = cmd.GetLong(l); // *(long*)(cmd + l);
+				data = cmd.GetInt(l); // *(long*)(cmd + l);
 
 				if (pfixup == -1)
 					pfixup = l;
@@ -2184,47 +2184,19 @@ namespace Disassembler
 									name = name + 'W';
 							}
 							else
-								//name[i++] = pd.name[j];
 								name = name + pd.name[j];
 						};
 						//name[i] = '\0';
 					}
 					else
 					{
-						//strcpy(name, pd.name);
 						name = pd.name;
 
 						int comma_index = name.IndexOf(',');
 						if (comma_index >= 0)
 							name = name.Substring(0, comma_index - 1);
-
-						//for (i = 0; name[i] != '\0'; i++)
-						//{
-						//    if (name[i] == ',')
-						//    { // Use main mnemonic
-						//        name[i] = '\0';
-						//        break;
-						//    };
-						//};
 					};
-					//if (repprefix != 0 && tabarguments)
-					//{
-					//    for (i = 0; name[i] != '\0' && name[i] != ' '; i++)
-					//        da.result[nresult++] = name[i];
-
-					//    if (name[i] == ' ')
-					//    {
-					//        da.result[nresult++] = ' '; i++;
-					//    };
-
-					//    while (nresult < 8) da.result[nresult++] = ' ';
-
-					//    for (; name[i] != '\0'; i++)
-					//        da.result[nresult++] = name[i];
-
-					//}
-					//else
-					//sprintf(da.result + nresult, "%s", name);
+				
 					da.result.Append(name);
 				};
 				// Decode operands (explicit - encoded in command, implicit - present in
